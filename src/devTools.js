@@ -1,11 +1,21 @@
-import { stringify, parse } from 'jsan';
+import { stringify } from 'jsan';
 import socketCluster from 'socketcluster-client';
 import getHostForRN from 'rn-host-detect';
-import { defaultSocketOptions } from './constants';
+
+const defaultSocketOptions = {
+  secure: true,
+  hostname: 'remotedev.io',
+  port: 443,
+  autoReconnect: true,
+  autoReconnectOptions: {
+    randomness: 60000,
+  },
+};
 
 let socket;
 let channel;
 const listeners = {};
+let obtainedUrl = null;
 
 export function extractState(message) {
   if (!message || !message.state) return undefined;
@@ -50,13 +60,44 @@ function connectToServer(options) {
   watch();
 }
 
-export function start(options) {
-  if (options) {
-    if (options.port && !options.hostname) {
-      options.hostname = 'localhost';
-    }
+
+// obtains ulr from the promise and then performs the callback
+// also, overwrites `optionsObject.hostname`
+// obtained url is stored in `obtainedUrl` variable
+// if it's already obtained, skip fetching
+function obtainUrl(urlPromise, optionsObject, callback) {
+  if (optionsObject.hostname) {
+    // hostname is in options
+    callback();
+  } else if (obtainedUrl) {
+    // hostname has been obtained using the promise already
+    optionsObject.hostname = obtainedUrl;
+    callback();
+  } else {
+    // hostname needs to be obtained
+    urlPromise
+      .then((url) => {
+        // connect to the server with obtained server address
+        obtainedUrl = url;
+        optionsObject.hostname = url;
+        callback();
+      })
+      .catch((err) => {
+        console.log('Error obtaining socket url: ' + err.toString());
+      });
   }
-  connectToServer(options);
+}
+
+function start(options, urlPromise) {
+  if (options) {
+    if (!options.port) {
+      // no port provided - we should throw!
+      throw new Error('no port provided');
+    }
+    obtainUrl(urlPromise, options, () => {
+      connectToServer(options);
+    });
+  }
 }
 
 function transformAction(action, config) {
@@ -90,12 +131,14 @@ export function send(action, state, options, type, instanceId) {
   }, 0);
 }
 
-export function connect(options = {}) {
+export function connect(options = {}, urlPromise) {
   const id = generateId(options.instanceId);
-  start(options);
+  start(options, urlPromise);
   return {
     init: (state, action) => {
-      send(action || {}, state, options, 'INIT', id);
+      obtainUrl(urlPromise, options, () => {
+        send(action || {}, state, options, 'INIT', id);
+      });
     },
     subscribe: (listener) => {
       if (!listener) return undefined;
@@ -112,9 +155,13 @@ export function connect(options = {}) {
     },
     send: (action, payload) => {
       if (action) {
-        send(action, payload, options, 'ACTION', id);
+        obtainUrl(urlPromise, options, () => {
+          send(action, payload, options, 'ACTION', id);
+        });
       } else {
-        send(undefined, payload, options, 'STATE', id);
+        obtainUrl(urlPromise, options, () => {
+          send(undefined, payload, options, 'STATE', id);
+        });
       }
     },
     error: (payload) => {
