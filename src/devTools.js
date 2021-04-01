@@ -73,19 +73,19 @@ function obtainUrl(urlPromise, optionsObject, callback) {
     // hostname has been obtained using the promise already
     optionsObject.hostname = obtainedUrl;
     callback();
-  } else {
-    // hostname needs to be obtained
-    urlPromise
-      .then((url) => {
-        // connect to the server with obtained server address
-        obtainedUrl = url;
-        optionsObject.hostname = url;
-        callback();
-      })
-      .catch((err) => {
-        console.log('Error obtaining socket url: ' + err.toString());
-      });
+    return;
   }
+  // hostname needs to be obtained
+  urlPromise
+    .then((url) => {
+      // connect to the server with obtained server address
+      obtainedUrl = url;
+      optionsObject.hostname = url;
+      callback();
+    })
+    .catch((err) => {
+      console.log('Error obtaining socket url: ' + err.toString());
+    });
 }
 
 function start(options, urlPromise) {
