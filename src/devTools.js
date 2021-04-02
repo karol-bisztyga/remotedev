@@ -1,4 +1,4 @@
-import { stringify } from 'jsan';
+import { stringify, parse } from 'jsan';
 import socketCluster from 'socketcluster-client';
 import getHostForRN from 'rn-host-detect';
 
@@ -15,7 +15,7 @@ const defaultSocketOptions = {
 let socket;
 let channel;
 const listeners = {};
-let obtainedUrl = null;
+let obtainedHostname = null;
 
 export function extractState(message) {
   if (!message || !message.state) return undefined;
@@ -61,40 +61,37 @@ function connectToServer(options) {
 }
 
 
-// obtains ulr from the promise and then performs the callback
+// obtains hostname from the promise and then performs the callback
 // also, overwrites `optionsObject.hostname`
-// obtained url is stored in `obtainedUrl` variable
+// obtained hostname is stored in `obtainedHostname` variable
 // if it's already obtained, skip fetching
-function obtainUrl(urlPromise, optionsObject, callback) {
+async function obtainHostname(hostnamePromise, optionsObject, callback) {
   if (optionsObject.hostname) {
     // hostname is in options
     callback();
-  } else if (obtainedUrl) {
+  } else if (obtainedHostname) {
     // hostname has been obtained using the promise already
-    optionsObject.hostname = obtainedUrl;
+    optionsObject.hostname = obtainedHostname;
     callback();
     return;
   }
   // hostname needs to be obtained
-  urlPromise
-    .then((url) => {
-      // connect to the server with obtained server address
-      obtainedUrl = url;
-      optionsObject.hostname = url;
-      callback();
-    })
-    .catch((err) => {
-      console.log('Error obtaining socket url: ' + err.toString());
-    });
+  try {
+    obtainedHostname = await hostnamePromise;
+    optionsObject.hostname = obtainedHostname;
+    callback();
+  } catch (err) {
+    console.log('Error obtaining socket hostname: ' + err.toString());
+  }
 }
 
-function start(options, urlPromise) {
+function start(options, hostnamePromise) {
   if (options) {
     if (!options.port) {
       // no port provided - we should throw!
       throw new Error('no port provided');
     }
-    obtainUrl(urlPromise, options, () => {
+    obtainHostname(hostnamePromise, options, () => {
       connectToServer(options);
     });
   }
@@ -131,12 +128,12 @@ export function send(action, state, options, type, instanceId) {
   }, 0);
 }
 
-export function connect(options = {}, urlPromise) {
+export function connect(options = {}, hostnamePromise) {
   const id = generateId(options.instanceId);
-  start(options, urlPromise);
+  start(options, hostnamePromise);
   return {
     init: (state, action) => {
-      obtainUrl(urlPromise, options, () => {
+      obtainHostname(hostnamePromise, options, () => {
         send(action || {}, state, options, 'INIT', id);
       });
     },
@@ -155,11 +152,11 @@ export function connect(options = {}, urlPromise) {
     },
     send: (action, payload) => {
       if (action) {
-        obtainUrl(urlPromise, options, () => {
+        obtainHostname(hostnamePromise, options, () => {
           send(action, payload, options, 'ACTION', id);
         });
       } else {
-        obtainUrl(urlPromise, options, () => {
+        obtainHostname(hostnamePromise, options, () => {
           send(undefined, payload, options, 'STATE', id);
         });
       }
