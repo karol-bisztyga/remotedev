@@ -1,21 +1,11 @@
 import { stringify, parse } from 'jsan';
 import socketCluster from 'socketcluster-client';
 import getHostForRN from 'rn-host-detect';
-
-const defaultSocketOptions = {
-  secure: true,
-  hostname: 'remotedev.io',
-  port: 443,
-  autoReconnect: true,
-  autoReconnectOptions: {
-    randomness: 60000,
-  },
-};
+import { defaultSocketOptions } from './constants';
 
 let socket;
 let channel;
 const listeners = {};
-let obtainedHostname = null;
 
 export function extractState(message) {
   if (!message || !message.state) return undefined;
@@ -60,40 +50,14 @@ function connectToServer(options) {
   watch();
 }
 
-
-// obtains hostname from the promise and then performs the callback
-// also, overwrites `optionsObject.hostname`
-// obtained hostname is stored in `obtainedHostname` variable
-// if it's already obtained, skip fetching
-async function obtainHostname(hostnamePromise, optionsObject, callback) {
-  if (optionsObject.hostname) {
-    // hostname is in options
-    callback();
-  } else if (obtainedHostname) {
-    // hostname has been obtained using the promise already
-    optionsObject.hostname = obtainedHostname;
-    callback();
-    return;
-  }
-  // hostname needs to be obtained
+async function start(options, hostnamePromise) {
   try {
-    obtainedHostname = await hostnamePromise;
-    optionsObject.hostname = obtainedHostname;
-    callback();
-  } catch (err) {
-    console.log('Error obtaining socket hostname: ' + err.toString());
-  }
-}
-
-function start(options, hostnamePromise) {
-  if (options) {
-    if (!options.port) {
-      // no port provided - we should throw!
-      throw new Error('no port provided');
+    if (!options.hostname) {
+      options.hostname = await hostnamePromise;
     }
-    obtainHostname(hostnamePromise, options, () => {
-      connectToServer(options);
-    });
+    connectToServer(options);
+  } catch (err) {
+    throw new Error('Error obtaining socket hostname: ' + err.toString());
   }
 }
 
@@ -113,9 +77,10 @@ function transformAction(action, config) {
   return liftedAction;
 }
 
-export function send(action, state, options, type, instanceId) {
-  start(options);
-  setTimeout(() => {
+export function send(action, state, options, type, instanceId, hostnamePromise) {
+  setTimeout(async () => {
+    // makes sure the connection is established
+    await start(options, hostnamePromise);
     const message = {
       payload: state ? stringify(state) : '',
       action: type === 'ACTION' ? stringify(transformAction(action, options)) : action,
@@ -130,12 +95,13 @@ export function send(action, state, options, type, instanceId) {
 
 export function connect(options = {}, hostnamePromise) {
   const id = generateId(options.instanceId);
-  start(options, hostnamePromise);
+  if (!options.port) {
+    // no port provided - we should throw!
+    throw new Error('no port provided');
+  }
   return {
     init: (state, action) => {
-      obtainHostname(hostnamePromise, options, () => {
-        send(action || {}, state, options, 'INIT', id);
-      });
+      send(action || {}, state, options, 'INIT', id, hostnamePromise);
     },
     subscribe: (listener) => {
       if (!listener) return undefined;
@@ -152,17 +118,18 @@ export function connect(options = {}, hostnamePromise) {
     },
     send: (action, payload) => {
       if (action) {
-        obtainHostname(hostnamePromise, options, () => {
-          send(action, payload, options, 'ACTION', id);
-        });
+        send(action, payload, options, 'ACTION', id, hostnamePromise);
       } else {
-        obtainHostname(hostnamePromise, options, () => {
-          send(undefined, payload, options, 'STATE', id);
-        });
+        send(undefined, payload, options, 'STATE', id, hostnamePromise);
       }
     },
     error: (payload) => {
-      socket.emit({ type: 'ERROR', payload, id: socket.id, instanceId: id });
+      // like in the `send` function
+      setTimeout(async () => {
+        // makes sure the connection is established
+        await start(options, hostnamePromise);
+        socket.emit({ type: 'ERROR', payload, id: socket.id, instanceId: id });
+      }, 0);
     }
   };
 }
