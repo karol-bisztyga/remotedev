@@ -50,14 +50,16 @@ function connectToServer(options) {
   watch();
 }
 
-async function start(options, hostnamePromise) {
-  try {
-    if (!options.hostname) {
-      options.hostname = await hostnamePromise;
+export async function start(options, hostnamePromise) {
+  if (options) {
+    try {
+      if (options.port && !options.hostname) {
+        options.hostname = await hostnamePromise;
+      }
+      connectToServer(options);
+    } catch (err) {
+      throw new Error('Error obtaining socket hostname: ' + err.toString());
     }
-    connectToServer(options);
-  } catch (err) {
-    throw new Error('Error obtaining socket hostname: ' + err.toString());
   }
 }
 
@@ -95,10 +97,6 @@ export function send(action, state, options, type, instanceId, hostnamePromise) 
 
 export function connect(options = {}, hostnamePromise) {
   const id = generateId(options.instanceId);
-  if (!options.port) {
-    // no port provided - we should throw!
-    throw new Error('no port provided');
-  }
   return {
     init: (state, action) => {
       send(action || {}, state, options, 'INIT', id, hostnamePromise);
