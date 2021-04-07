@@ -50,10 +50,18 @@ function connectToServer(options) {
   watch();
 }
 
-export function start(options) {
+async function obtainHostname(options, hostnamePromise) {
+  if (!options.hostname) {
+    options.hostname = await hostnamePromise.catch((err) => {
+      throw new Error('Error obtaining socket hostname: ' + err.toString());
+    });
+  }
+}
+
+export async function start(options, hostnamePromise) {
   if (options) {
-    if (options.port && !options.hostname) {
-      options.hostname = 'localhost';
+    if (options.port && !options.hostname && hostnamePromise) {
+      await obtainHostname(options, hostnamePromise);
     }
   }
   connectToServer(options);
@@ -90,19 +98,12 @@ export function send(action, state, options, type, instanceId) {
   }, 0);
 }
 
-async function obtainiHostname(options, hostnamePromise) {
-  if (!options.hostname) {
-    options.hostname = await hostnamePromise.catch((err) => {
-      throw new Error('Error obtaining socket hostname: ' + err.toString());
-    });
-  }
-}
-
 export function connect(options = {}, hostnamePromise) {
   const id = generateId(options.instanceId);
+  start(options, hostnamePromise);
   return {
     init: async (state, action) => {
-      await obtainiHostname(options, hostnamePromise);
+      await obtainHostname(options, hostnamePromise);
       send(action || {}, state, options, 'INIT', id);
     },
     subscribe: (listener) => {
@@ -119,7 +120,7 @@ export function connect(options = {}, hostnamePromise) {
       delete listeners[id];
     },
     send: async (action, payload) => {
-      await obtainiHostname(options, hostnamePromise);
+      await obtainHostname(options, hostnamePromise);
       if (action) {
         send(action, payload, options, 'ACTION', id);
       } else {
@@ -128,8 +129,7 @@ export function connect(options = {}, hostnamePromise) {
     },
     error: async (payload) => {
       // makes sure the connection is established
-      await obtainiHostname(options, hostnamePromise);
-      start(options);
+      await start(options, hostnamePromise);
       socket.emit({ type: 'ERROR', payload, id: socket.id, instanceId: id });
     }
   };
