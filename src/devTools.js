@@ -50,17 +50,13 @@ function connectToServer(options) {
   watch();
 }
 
-export async function start(options, hostnamePromise) {
+export function start(options) {
   if (options) {
-    try {
-      if (options.port && !options.hostname) {
-        options.hostname = await hostnamePromise;
-      }
-      connectToServer(options);
-    } catch (err) {
-      throw new Error('Error obtaining socket hostname: ' + err.toString());
+    if (options.port && !options.hostname) {
+      options.hostname = 'localhost';
     }
   }
+  connectToServer(options);
 }
 
 function transformAction(action, config) {
@@ -79,10 +75,9 @@ function transformAction(action, config) {
   return liftedAction;
 }
 
-export function send(action, state, options, type, instanceId, hostnamePromise) {
-  setTimeout(async () => {
-    // makes sure the connection is established
-    await start(options, hostnamePromise);
+export function send(action, state, options, type, instanceId) {
+  start(options);
+  setTimeout(() => {
     const message = {
       payload: state ? stringify(state) : '',
       action: type === 'ACTION' ? stringify(transformAction(action, options)) : action,
@@ -95,11 +90,20 @@ export function send(action, state, options, type, instanceId, hostnamePromise) 
   }, 0);
 }
 
+async function obtainiHostname(options, hostnamePromise) {
+  if (!options.hostname) {
+    options.hostname = await hostnamePromise.catch((err) => {
+      throw new Error('Error obtaining socket hostname: ' + err.toString());
+    });
+  }
+}
+
 export function connect(options = {}, hostnamePromise) {
   const id = generateId(options.instanceId);
   return {
-    init: (state, action) => {
-      send(action || {}, state, options, 'INIT', id, hostnamePromise);
+    init: async (state, action) => {
+      await obtainiHostname(options, hostnamePromise);
+      send(action || {}, state, options, 'INIT', id);
     },
     subscribe: (listener) => {
       if (!listener) return undefined;
@@ -114,20 +118,19 @@ export function connect(options = {}, hostnamePromise) {
     unsubscribe: () => {
       delete listeners[id];
     },
-    send: (action, payload) => {
+    send: async (action, payload) => {
+      await obtainiHostname(options, hostnamePromise);
       if (action) {
-        send(action, payload, options, 'ACTION', id, hostnamePromise);
+        send(action, payload, options, 'ACTION', id);
       } else {
-        send(undefined, payload, options, 'STATE', id, hostnamePromise);
+        send(undefined, payload, options, 'STATE', id);
       }
     },
-    error: (payload) => {
-      // like in the `send` function
-      setTimeout(async () => {
-        // makes sure the connection is established
-        await start(options, hostnamePromise);
-        socket.emit({ type: 'ERROR', payload, id: socket.id, instanceId: id });
-      }, 0);
+    error: async (payload) => {
+      // makes sure the connection is established
+      await obtainiHostname(options, hostnamePromise);
+      start(options);
+      socket.emit({ type: 'ERROR', payload, id: socket.id, instanceId: id });
     }
   };
 }
