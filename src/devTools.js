@@ -128,7 +128,6 @@ export function connect(options = {}, hostnamePromise) {
       }
     },
     error: async (payload) => {
-      // makes sure the connection is established
       await start(options, hostnamePromise);
       socket.emit({ type: 'ERROR', payload, id: socket.id, instanceId: id });
     }
